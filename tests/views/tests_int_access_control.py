@@ -1,11 +1,15 @@
 """ Test access to views
 """
+from unittest.mock import patch
+
 from django.contrib.auth.models import AnonymousUser
+from django.contrib.messages.storage.fallback import FallbackStorage
 from django.test import RequestFactory
 from tests.views.fixtures import AccessControlDataFixture
 
 from core_main_app.components.blob import api as blob_api
 from core_main_app.components.data import api as data_api
+from core_main_app.settings import MAX_DOCUMENT_EDITING_SIZE
 from core_main_app.utils.integration_tests.integration_base_test_case import (
     MongoIntegrationBaseTestCase,
 )
@@ -14,6 +18,9 @@ from core_main_app.views.common.views import (
     ViewData,
     EditWorkspaceRights,
     TemplateXSLRenderingView,
+    DataContentEditor,
+    XSDEditor,
+    AbstractEditorView,
 )
 from core_main_app.views.user.ajax import (
     AssignView,
@@ -351,6 +358,39 @@ class TestChangeDataDisplayView(MongoIntegrationBaseTestCase):
         response = change_data_display(request)
         self.assertEqual(response.status_code, 200)
 
+    def test_change_data_display_returns_http_200(self):
+        """test_change_data_display_returns_http_200
+
+        Returns:
+
+        """
+        data = {
+            "xslt_id": "1",
+            "template_id": str(self.fixture.data_1.template.id),
+            "content": "<tag></tag>",
+        }
+        request = self.factory.post("core_main_add_change_data_display", data)
+        request.user = self.user1
+        response = change_data_display(request)
+        self.assertEqual(response.status_code, 200)
+
+    def test_change_data_display_returns_error_when_template_id_is_missing(
+        self,
+    ):
+        """test_change_data_display_returns_error_when_template_id_is_missing
+
+        Returns:
+
+        """
+        data = {
+            "xslt_id": "1",
+            "content": "<tag></tag>",
+        }
+        request = self.factory.post("core_main_add_change_data_display", data)
+        request.user = self.user1
+        response = change_data_display(request)
+        self.assertEqual(response.status_code, 400)
+
     def test_an_anonymous_user_can_not_assign_a_user_data(self):
         """test_an_anonymous_user_can_not_assign_a_user_data
 
@@ -617,3 +657,470 @@ class TestAddGroupRightToWorkspace(MongoIntegrationBaseTestCase):
         response = add_group_right_to_workspace(request)
         self.assertEqual(response.status_code, 302)
         self.assertTrue(response.url.startswith(LOGIN_URL))
+
+
+class TestAbstractEditorView(MongoIntegrationBaseTestCase):
+    """Test Get XML Text Editor View"""
+
+    def setUp(self):
+
+        """setUp
+
+        Returns:
+
+        """
+        self.fixture = AccessControlDataFixture()
+        self.fixture.insert_data()
+
+    def test_format_raises_not_implemented_error(self):
+        """test_format_raises_not_implemented_error
+
+        Returns:
+
+        """
+        # Assert
+        with self.assertRaises(NotImplementedError):
+            AbstractEditorView.format(self)
+
+    def test_validate_raises_not_implemented_error(self):
+        """test_validate_raises_not_implemented_error
+
+        Returns:
+
+        """
+        # Assert
+        with self.assertRaises(NotImplementedError):
+            AbstractEditorView.validate(self)
+
+    def test_save_raises_not_implemented_error(self):
+        """test_save_raises_not_implemented_error
+
+        Returns:
+
+        """
+        # Assert
+        with self.assertRaises(NotImplementedError):
+            AbstractEditorView.save(self)
+
+
+class TestDataContentEditorView(MongoIntegrationBaseTestCase):
+    """Test Post Data Content Editor View"""
+
+    def setUp(self):
+        """setUp
+
+        Returns:
+
+        """
+        self.factory = RequestFactory()
+        self.user1 = create_mock_user(user_id="1")
+        self.anonymous = AnonymousUser()
+        self.fixture = AccessControlDataFixture()
+        self.fixture.insert_data()
+
+    def test_anonymous_user_can_not_access_to_data(self):
+        """test_anonymous_user_can_not_access_to_data
+
+        Returns:
+
+        """
+        request = self.factory.get("core_main_app_xml_text_editor_view")
+        request.user = self.anonymous
+        request.GET = {"id": str(self.fixture.data_1.id)}
+        response = DataContentEditor.as_view()(request)
+        self.assertTrue(
+            self.fixture.data_1.title not in response.content.decode()
+        )
+        self.assertTrue("Error 403" in response.content.decode())
+
+    def test_user_can_not_access_to_data_if_not_found(self):
+        """test_user_can_not_access_a_data_if_not_found
+
+        Returns:
+
+        """
+        request = self.factory.get("core_main_app_xml_text_editor_view")
+        request.GET = {"id": "-1"}
+        request.user = self.user1
+        response = DataContentEditor.as_view()(request)
+        self.assertTrue("Error 404" in response.content.decode())
+
+    def test_user_can_access_to_data_if_owner(self):
+        """test_user_can_access_a_data_if_owner
+
+        Returns:
+
+        """
+        request = self.factory.get("core_main_app_xml_text_editor_view")
+        request.GET = {"id": str(self.fixture.data_1.id)}
+        request.user = self.user1
+        response = DataContentEditor.as_view()(
+            request,
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_user_can_format_xml_content(self):
+        """test_user_can_format_xml_content
+
+        Returns:
+
+        """
+        data = {
+            "content": "<root><element>value2</element></root>",
+            "action": "format",
+            "id": str(self.fixture.data_1.id),
+        }
+        request = self.factory.post("core_main_app_xml_text_editor_view", data)
+
+        request.user = self.user1
+        response = DataContentEditor.as_view()(request)
+        self.assertEqual(response.status_code, 200)
+
+    def test_user_can_validate_xml_content(self):
+        """test_user_can_validate_xml_content
+
+        Returns:
+
+        """
+        data = {
+            "content": "<root></root>",
+            "action": "validate",
+            "template_id": str(self.fixture.data_1.template.id),
+            "id": str(self.fixture.data_1.id),
+        }
+        request = self.factory.post("core_main_app_xml_text_editor_view", data)
+
+        request.user = self.user1
+        response = DataContentEditor.as_view()(request)
+        self.assertEqual(response.status_code, 200)
+
+    def test_user_validate_bad_xml_content_returns_error(self):
+        """test_user_validate_xml_content_returns_error
+
+        Returns:
+
+        """
+        data = {
+            "content": "<tag></tag>",
+            "action": "validate",
+            "template_id": str(self.fixture.data_1.template.id),
+            "id": str(self.fixture.data_1.id),
+        }
+        request = self.factory.post("core_main_app_xml_text_editor_view", data)
+        request.user = self.user1
+
+        response = DataContentEditor.as_view()(request)
+        self.assertEqual(response.status_code, 400)
+
+    def test_user_validate_empty_content_returns_error(self):
+        """test_user_validate_empty_content_returns_error
+
+        Returns:
+
+        """
+        data = {
+            "content": "",
+            "action": "validate",
+            "template_id": str(self.fixture.data_1.template.id),
+            "id": str(self.fixture.data_1.id),
+        }
+        request = self.factory.post("core_main_app_xml_text_editor_view", data)
+
+        request.user = self.user1
+        response = DataContentEditor.as_view()(request)
+        self.assertEqual(response.status_code, 400)
+
+    def test_user_validate_xml_content_returns_error(self):
+        """test_user_validate_xml_content_returns_error
+
+        Returns:
+
+        """
+        data = {
+            "content": "<root></root>",
+            "action": "validate",
+            "template_id": "",
+            "id": str(self.fixture.data_1.id),
+        }
+        request = self.factory.post("core_main_app_xml_text_editor_view", data)
+        request.user = self.user1
+        response = DataContentEditor.as_view()(request)
+        self.assertEqual(response.status_code, 400)
+
+    def test_user_can_save_xml_content(self):
+        """test_user_can_save_xml_content
+
+        Returns:
+
+        """
+        data = {
+            "content": "<root></root>",
+            "action": "save",
+            "document_id": str(self.fixture.data_1.id),
+            "id": str(self.fixture.data_1.id),
+        }
+        request = self.factory.post("core_main_app_xml_text_editor_view", data)
+        setattr(request, "session", "session")
+        messages = FallbackStorage(request)
+        setattr(request, "_messages", messages)
+        request.user = self.user1
+        response = DataContentEditor.as_view()(request)
+        self.assertEqual(response.status_code, 200)
+
+    def test_user_save_xml_content_returns_acl_error(self):
+        """test_user_save_xml_content_returns_acl_error
+
+        Returns:
+
+        """
+        data = {
+            "content": "<root></root>",
+            "action": "save",
+            "document_id": str(self.fixture.data_1.id),
+            "id": str(self.fixture.data_1.id),
+        }
+        request = self.factory.post("core_main_app_xml_text_editor_view", data)
+        request.user = self.anonymous
+        response = DataContentEditor.as_view()(request)
+        self.assertEqual(response.status_code, 403)
+
+    def test_user_save_xml_content_returns_dne_error(self):
+        """test_user_save_xml_content_returns_dne_error
+
+        Returns:
+
+        """
+        data = {
+            "content": "<root></root>",
+            "action": "save",
+            "document_id": "-1",
+            "id": "-1",
+        }
+        request = self.factory.post("core_main_app_xml_text_editor_view", data)
+        request.user = self.user1
+        response = DataContentEditor.as_view()(request)
+        self.assertEqual(response.status_code, 400)
+
+    def test_user_save_xml_content_returns_error(self):
+        """test_user_save_xml_content_returns_error
+
+        Returns:
+
+        """
+        data = {
+            "action": "save",
+            "document_id": "-1",
+            "id": "-1",
+        }
+        request = self.factory.post("core_main_app_xml_text_editor_view", data)
+        request.user = self.user1
+        response = DataContentEditor.as_view()(request)
+        self.assertEqual(response.status_code, 400)
+
+    @patch("core_main_app.utils.file.get_byte_size_from_string")
+    def test_xml_content_too_big_returns_error(self, mock_get_byte_size):
+        """test_user_save_xml_content_returns_error
+
+        Returns:
+
+        """
+        mock_get_byte_size.return_value = MAX_DOCUMENT_EDITING_SIZE + 1
+        request = self.factory.get("core_main_app_xml_text_editor_view")
+        request.GET = {"id": str(self.fixture.data_1.id)}
+        request.user = self.user1
+        response = DataContentEditor.as_view()(request)
+        self.assertTrue(
+            "MAX_DOCUMENT_EDITING_SIZE" in response.content.decode()
+        )
+
+
+class TestXSDTextEditorView(MongoIntegrationBaseTestCase):
+    """Test Post XSD Text Editor View"""
+
+    def setUp(self):
+        """setUp
+
+        Returns:
+
+        """
+        self.factory = RequestFactory()
+        self.user1 = create_mock_user(user_id="1")
+        self.anonymous = AnonymousUser()
+        self.fixture = AccessControlDataFixture()
+        self.fixture.insert_data()
+
+    def test_anonymous_user_can_not_access_template_content(self):
+        """test_anonymous_user_can_not_access_template_content
+
+        Returns:
+
+        """
+        request = self.factory.get("core_main_app_xsd_text_editor_view")
+        request.user = self.anonymous
+        request.GET = {"id": str(self.fixture.template.id)}
+        response = XSDEditor.as_view()(request)
+
+        self.assertTrue("Error 403" in response.content.decode())
+
+    def test_user_can_not_access_template_if_not_found(self):
+        """test_user_can_not_access_template_if_not_found
+
+        Returns:
+
+        """
+        request = self.factory.get("core_main_app_xsd_text_editor_view")
+        request.user = self.user1
+        request.GET = {"id": "-1"}
+        response = XSDEditor.as_view()(request)
+        self.assertTrue("Error 404" in response.content.decode())
+
+    def test_user_can_access_template(self):
+        """test_user_can_access_template
+
+        Returns:
+
+        """
+        request = self.factory.get("core_main_app_xsd_text_editor_view")
+        request.user = self.user1
+        request.GET = {"id": str(self.fixture.template.id)}
+        response = XSDEditor.as_view()(request)
+        self.assertEqual(response.status_code, 200)
+
+    def test_user_can_format_xsd_content(self):
+        """test_user_can_format_xsd_content
+
+        Returns:
+
+        """
+        data = {
+            "content": self.fixture.template.content,
+            "action": "format",
+            "id": str(self.fixture.template.id),
+        }
+        request = self.factory.post("core_main_app_xsd_text_editor_view", data)
+
+        request.user = self.user1
+        response = XSDEditor.as_view()(request)
+        self.assertEqual(response.status_code, 200)
+
+    def test_user_can_validate_xsd_content(self):
+        """test_user_can_validate_xsd_content
+
+        Returns:
+
+        """
+        data = {
+            "content": self.fixture.template.content,
+            "action": "validate",
+            "template_id": str(self.fixture.template.id),
+            "id": str(self.fixture.template.id),
+        }
+        request = self.factory.post("core_main_app_xsd_text_editor_view", data)
+        request.user = self.user1
+        response = XSDEditor.as_view()(request)
+        self.assertEqual(response.status_code, 200)
+
+    def test_user_validate_empty_xsd_content_returns_error(self):
+        """test_user_validate_empty_xsd_content_returns_error
+
+        Returns:
+
+        """
+        data = {
+            "content": "",
+            "action": "validate",
+            "template_id": str(self.fixture.template.id),
+            "id": str(self.fixture.template.id),
+        }
+        request = self.factory.post("core_main_app_xsd_text_editor_view", data)
+        request.user = self.user1
+        response = XSDEditor.as_view()(request)
+        self.assertEqual(response.status_code, 400)
+
+    def test_user_validate_bad_xsd_content_returns_error(self):
+        """test_user_validate_bad_xsd_content_returns_error
+
+        Returns:
+
+        """
+        xsd = (
+            '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">'
+            '<xs:element nam="root"></xs:element></xs:schema>'
+        )
+        data = {
+            "content": xsd,
+            "action": "validate",
+            "template_id": str(self.fixture.template.id),
+            "id": str(self.fixture.template.id),
+        }
+        request = self.factory.post("core_main_app_xsd_text_editor_view", data)
+        request.user = self.user1
+        response = XSDEditor.as_view()(request)
+        self.assertEqual(response.status_code, 400)
+
+    def test_user_can_save_xsd_content(self):
+        """test_user_can_save_xsd_content
+
+        Returns:
+
+        """
+        data = {
+            "content": self.fixture.template.content,
+            "action": "save",
+            "id": str(self.fixture.template.id),
+            "document_id": str(self.fixture.template.id),
+        }
+        request = self.factory.post("core_main_app_xsd_text_editor_view", data)
+        request.user = self.user1
+        response = XSDEditor.as_view()(request)
+        self.assertEqual(response.status_code, 200)
+
+    def test_user_save_xsd_content_returns_acl_error(self):
+        """test_user_save_xsd_content_returns_acl_error
+
+        Returns:
+
+        """
+        data = {
+            "content": self.fixture.template.content,
+            "action": "save",
+            "id": str(self.fixture.template.id),
+            "document_id": str(self.fixture.template.id),
+        }
+        request = self.factory.post("core_main_app_xsd_text_editor_view", data)
+        request.user = self.anonymous
+        response = XSDEditor.as_view()(request)
+        self.assertEqual(response.status_code, 403)
+
+    def test_user_save_xml_content_returns_dne_error(self):
+        """test_user_save_xsd_content_returns_dne_error
+
+        Returns:
+
+        """
+        data = {
+            "content": self.fixture.template.content,
+            "action": "save",
+            "id": "-1",
+            "document_id": "-1",
+        }
+        request = self.factory.post("core_main_app_xsd_text_editor_view", data)
+        request.user = self.user1
+        response = XSDEditor.as_view()(request)
+        self.assertEqual(response.status_code, 400)
+
+    def test_user_save_xml_content_returns_error(self):
+        """test_user_save_xml_content_returns_error
+
+        Returns:
+
+        """
+        data = {
+            "action": "save",
+            "id": "-1",
+            "document_id": "-1",
+        }
+        request = self.factory.post("core_main_app_xsd_text_editor_view", data)
+        request.user = self.user1
+        response = XSDEditor.as_view()(request)
+        self.assertEqual(response.status_code, 400)

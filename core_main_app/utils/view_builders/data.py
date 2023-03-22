@@ -31,32 +31,13 @@ def build_page(
     }
 
     try:
-        display_xslt_selector = True
-        try:
-            template_xsl_rendering = (
-                template_xsl_rendering_api.get_by_template_id(
-                    data_object.template.id
-                )
-            )
-            xsl_transformation_id = (
-                template_xsl_rendering.default_detail_xslt.id
-                if template_xsl_rendering.default_detail_xslt
-                else None
-            )
-            if template_xsl_rendering.list_detail_xslt.count() == 0 or (
-                template_xsl_rendering.default_detail_xslt is not None
-                and template_xsl_rendering.list_detail_xslt.count() == 1
-            ):
-                display_xslt_selector = False
-
-        except Exception as exception:
-            logger.warning(
-                "An exception occurred when retrieving XSLT: %s",
-                str(exception),
-            )
-            display_xslt_selector = False
-            template_xsl_rendering = None
-            xsl_transformation_id = None
+        (
+            display_xslt_selector,
+            template_xsl_rendering,
+            xsl_transformation_id,
+        ) = xslt_selector(
+            _get_field(_get_field(data_object, "template"), "id")
+        )
 
         page_info["context"] = {
             "data": data_object,
@@ -65,7 +46,7 @@ def build_page(
             "xsl_transformation_id": xsl_transformation_id,
             "can_display_selector": display_xslt_selector,
             "display_download_options": display_download_options,
-            "page_title": _get_data_title(data_object),
+            "page_title": _get_field(data_object, "title"),
         }
 
         page_info["assets"] = {
@@ -154,25 +135,66 @@ def build_page(
         return page_info
 
 
-def _get_data_title(data_object):
-    """Get data title
+def _get_field(data_object, field):
+    """Get value of field from object or dict
 
     Args:
         data_object:
+        field:
 
     Returns:
 
     """
+    if field not in ["title", "template", "id"]:
+        return None
     # If data is None, title is None
     if not data_object:
         return None
-    # If data is a Data, return data.title
-    if hasattr(data_object, "title"):
-        return data_object.title
-    # If data is a dict, return title field
+    # If data is a Data, return data.field
+    if hasattr(data_object, field):
+        return getattr(data_object, field)
+    # If data is a dict, return data['field']
     if isinstance(data_object, dict):
-        return data_object.get("title", None)
+        return data_object.get(field, None)
     return None
+
+
+def xslt_selector(template_id):
+    """Setup Xslt Selector
+
+    Args:
+        template_id
+
+    Return:
+
+    """
+
+    display_xslt_selector = True
+    try:
+        template_xsl_rendering = template_xsl_rendering_api.get_by_template_id(
+            template_id
+        )
+        xsl_transformation_id = (
+            template_xsl_rendering.default_detail_xslt.id
+            if template_xsl_rendering.default_detail_xslt
+            else None
+        )
+        if template_xsl_rendering.list_detail_xslt.count() == 0 or (
+            template_xsl_rendering.default_detail_xslt is not None
+            and template_xsl_rendering.list_detail_xslt.count() == 1
+        ):
+            display_xslt_selector = False
+
+    except Exception as exception:
+        logger.warning(
+            "An exception occurred when retrieving XSLT: %s",
+            str(exception),
+        )
+        display_xslt_selector = False
+        template_xsl_rendering = None
+        xsl_transformation_id = None
+
+    return display_xslt_selector, template_xsl_rendering, xsl_transformation_id
 
 
 def render_page(request, render_function, template, context):

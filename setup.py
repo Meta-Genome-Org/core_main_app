@@ -63,7 +63,7 @@ chdir(normpath(join(abspath(__file__), pardir)))
 
 setup(
     name="core_main_app",
-    version="2.1.0",
+    version="2.2.0",
     description="Main functionalities for the curator core project",
     long_description=long_desc,
     author="NIST IT Lab",
@@ -71,7 +71,7 @@ setup(
     url="https://github.com/usnistgov/core_main_app",
     packages=find_packages(),
     include_package_data=True,
-    python_requires=">=3.7",
+    python_requires=">=3.8",
     install_requires=required,
     dependency_links=dep_links,
     extras_require={"develop": dev_extra, "mongodb": mongo_extra},
