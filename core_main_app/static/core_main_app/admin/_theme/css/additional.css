@@ -5,7 +5,7 @@
 .empty {
     text-align: center;
     font-style: italic;
-    color: gray;
+    color: teal;
 }
 
 form>input {
